@@ -9,7 +9,7 @@ All notable project changes are tracked here.
 - Added GNOME system-tray frontend (`frontend/gnome`) with AppIndicator/StatusNotifier support.
   - Displays a 22×22 colored microphone icon in the system panel that reflects voice state (idle/connecting/recording/stopping/error).
   - Dynamic context menu shows live status, statistics, recent logs, and a "Copy last result" action.
-  - Configuration editing via `zenity` forms.
+  - Use native GTK dialogs (via `gotk3`) for configuration editing, message/info dialogs, and log viewing.
   - Added `just-talk --frontend gnome` (build with `-tags gnome`).
 - Added headless `daemon` frontend for `--no-tui` / `--frontend daemon` mode.
 - Added `--frontend` CLI flag with `auto` detection (GNOME desktop defaults to tray, otherwise TUI).

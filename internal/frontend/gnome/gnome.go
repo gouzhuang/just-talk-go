@@ -31,9 +31,10 @@ func (f *Frontend) Run(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		f.tray.stop()
+		stopGTK()
 		return ctx.Err()
 	case <-f.tray.quit:
-		// User clicked quit from tray menu
+		stopGTK()
 		return nil
 	}
 }
@@ -42,5 +43,6 @@ func (f *Frontend) Stop() error {
 	if f.tray != nil {
 		f.tray.stop()
 	}
+	stopGTK()
 	return nil
 }
