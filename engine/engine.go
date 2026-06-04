@@ -53,6 +53,13 @@ func (e *Engine) Provider() hotkey.Provider {
 	return e.provider
 }
 
+// Config returns the current application configuration.
+func (e *Engine) Config() *config.Config {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.cfg
+}
+
 // Registry returns the hotkey registry.
 func (e *Engine) Registry() *hotkey.Registry {
 	return e.registry

@@ -7,18 +7,21 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/c/just-talk-go/config"
 	"github.com/c/just-talk-go/engine"
+	"github.com/c/just-talk-go/internal/frontend"
 	"github.com/c/just-talk-go/hotkey"
 	"github.com/c/just-talk-go/internal/doctor"
-	"github.com/c/just-talk-go/internal/tui"
+	"github.com/c/just-talk-go/internal/frontend/daemon"
+	"github.com/c/just-talk-go/internal/frontend/tui"
 	"github.com/c/just-talk-go/plugins"
 	"github.com/c/just-talk-go/plugins/overlay"
 	"github.com/c/just-talk-go/plugins/voice"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 func main() {
@@ -28,6 +31,7 @@ func main() {
 	verbose := flag.Bool("verbose", false, "verbose logging")
 	useTUI := flag.Bool("tui", true, "run with terminal UI")
 	noTUI := flag.Bool("no-tui", false, "run without terminal UI")
+	frontendFlag := flag.String("frontend", "auto", "frontend: tui, gnome, daemon, auto")
 	doctorOnly := flag.Bool("doctor", false, "run startup doctor and exit")
 	installOnly := flag.Bool("install", false, "install just-talk to ~/.local/bin")
 	overlayHelper := flag.Bool("overlay-helper", false, "run macOS overlay helper")
@@ -48,8 +52,22 @@ func main() {
 		}
 		return
 	}
+
+	// Legacy flag compatibility
 	if *noTUI {
-		*useTUI = false
+		*frontendFlag = "daemon"
+	}
+	if !*useTUI {
+		*frontendFlag = "daemon"
+	}
+
+	// Auto-detect frontend
+	if *frontendFlag == "auto" {
+		if isGNOME() {
+			*frontendFlag = "gnome"
+		} else {
+			*frontendFlag = "tui"
+		}
 	}
 
 	logLevel := slog.LevelInfo
@@ -57,9 +75,9 @@ func main() {
 		logLevel = slog.LevelDebug
 	}
 
-	// Daemon mode: log to stderr + file. TUI mode: file only (stderr corrupts display).
+	// Daemon/gnome mode: log to stderr + file. TUI mode: file only (stderr corrupts display).
 	var logWriter io.Writer
-	if *useTUI {
+	if *frontendFlag == "tui" {
 		lf, _ := os.OpenFile("/tmp/just-talk.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if lf != nil {
 			logWriter = lf
@@ -109,7 +127,7 @@ func main() {
 
 	eng := engine.New(provider, cfg, logger)
 
-	if *debug && cfg.Debug.Enabled && !*useTUI {
+	if *debug && cfg.Debug.Enabled && *frontendFlag != "tui" {
 		eng.LoadPlugin(plugins.NewDebugPlugin())
 	}
 	eng.LoadPlugin(voice.NewVoicePlugin())
@@ -118,39 +136,87 @@ func main() {
 		eng.WatchConfig(p)
 	}
 
-	if *useTUI {
-		runTUI(eng, cfg, *debug)
-	} else {
-		runDaemon(eng)
-	}
-}
+	env := frontend.NewEnv(eng)
 
-func runDaemon(eng *engine.Engine) {
-	slog.Info("just-talk started — press hotkeys, Ctrl+C to quit")
-	if err := eng.Start(true); err != nil && err != context.Canceled {
-		slog.Error("engine exited with error", "error", err)
+	var f frontend.Frontend
+	switch *frontendFlag {
+	case "tui":
+		f = tui.NewFrontend(env)
+	case "gnome":
+		f = newGnomeFrontend()
+		if f == nil {
+			fmt.Fprintf(os.Stderr, "GNOME frontend not available: build with -tags gnome (requires fyne.io/systray)\n")
+			os.Exit(1)
+		}
+	case "daemon":
+		f = daemon.New()
+	default:
+		fmt.Fprintf(os.Stderr, "unknown frontend: %s\n", *frontendFlag)
 		os.Exit(1)
 	}
-}
 
-func runTUI(eng *engine.Engine, cfg *config.Config, debug bool) {
-	voice.SetupTUILog()
-	voice.SetOutput(io.Discard)
-	model := tui.New(cfg)
-	model.SetDebug(debug)
-	model.OnSave = func(c *config.Config) error { return eng.ReloadConfig(c) }
+	if err := f.Init(env); err != nil {
+		logger.Error("frontend init failed", "error", err)
+		os.Exit(1)
+	}
+
+	// TUI specific setup
+	if *frontendFlag == "tui" {
+		voice.SetupTUILog()
+		voice.SetOutput(io.Discard)
+	}
+
+	logger.Info("starting", "frontend", f.Name())
+
+	// Start engine in background
 	go func() {
 		if err := eng.Start(false); err != nil && err != context.Canceled {
-			slog.Error("engine error", "error", err)
+			logger.Error("engine error", "error", err)
 		}
 	}()
-	go func() { model.Update(tui.SetProviderInfo(eng.Provider().Info())) }()
-	p := tea.NewProgram(model, tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
-		os.Exit(1)
+
+	// Set provider info for TUI
+	if tuiFrontend, ok := f.(*tui.Frontend); ok {
+		go func() {
+			info := eng.Provider().Info()
+			tuiFrontend.SetProviderInfo(info)
+		}()
 	}
+
+	// Run frontend
+	ctx, cancel := context.WithCancel(context.Background())
+	frontendDone := make(chan error, 1)
+	go func() {
+		frontendDone <- f.Run(ctx)
+		cancel()
+	}()
+
+	// Signal handling
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	select {
+	case sig := <-sigCh:
+		logger.Info("received signal", "signal", sig)
+	case <-ctx.Done():
+		// Frontend exited
+	}
+
+	f.Stop()
 	eng.Stop()
+	eng.Wait()
+}
+
+func isGNOME() bool {
+	// Check for GNOME desktop environment
+	de := os.Getenv("XDG_CURRENT_DESKTOP")
+	if strings.Contains(strings.ToLower(de), "gnome") {
+		return true
+	}
+	// Check for DISPLAY or WAYLAND_DISPLAY
+	if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+		return false
+	}
+	return false
 }
 
 func createProvider(backend string) (hotkey.Provider, error) {

@@ -110,6 +110,14 @@ func TUIStats() TUIVoiceStats {
 	return tuiStats
 }
 
+func TUILogs() []string {
+	tuilogMu.Lock()
+	defer tuilogMu.Unlock()
+	out := make([]string, len(TUILogBuf))
+	copy(out, TUILogBuf)
+	return out
+}
+
 func recordTUIStats(text string, audioDuration time.Duration) {
 	chars := countTextRunes(text)
 	tuiStatsMu.Lock()

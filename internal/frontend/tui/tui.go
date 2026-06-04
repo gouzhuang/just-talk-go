@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/c/just-talk-go/config"
+	"github.com/c/just-talk-go/internal/frontend"
 	"github.com/c/just-talk-go/hotkey"
-	"github.com/c/just-talk-go/plugins/voice"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -49,6 +49,7 @@ type field struct {
 }
 
 type Model struct {
+	env         frontend.Env
 	w, h        int
 	ready       bool
 	info        hotkey.ProviderInfo
@@ -57,7 +58,6 @@ type Model struct {
 	cfg         *config.Config
 	debug       bool
 	showLogs    bool
-	OnSave      func(*config.Config) error
 	fields      []field
 	cursor      int
 	editing     bool
@@ -65,12 +65,13 @@ type Model struct {
 	logExpanded bool
 }
 
-func New(cfg *config.Config) *Model {
+func New(env frontend.Env) *Model {
+	cfg := env.Config()
 	vc := cfg.Voice
 	ti := func(v string) textinput.Model { t := textinput.New(); t.SetValue(v); t.Cursor.Blink = false; return t }
 	fs := []field{
 		{label: "语音输入", key: "enabled", help: "关闭后不注册热键", fType: fToggle, boolVal: vc.Enabled},
-		{label: "热键", key: "push_to_talk", help: "例: Alt+Super / F9 / Ctrl+Alt+Tab；不支持字母、数字、标点、空格等普通字符键", fType: fString, input: ti(vc.PushToTalk)},
+		{label: "热键", key: "push_to_talk", help: "例: Alt+Super / F9 / Ctrl+Alt+TAB；不支持字母、数字、标点、空格等普通字符键", fType: fString, input: ti(vc.PushToTalk)},
 		{label: "模式", key: "mode", help: "toggle 切换 / hold 按住", fType: fSelect, opts: []string{"toggle", "hold"}, optIdx: idxOf([]string{"toggle", "hold"}, vc.Mode)},
 		{label: "App Key", key: "app_key", help: "火山 App ID", fType: fString, input: ti(vc.AppKey)},
 		{label: "Access Key", key: "access_key", help: "火山 Access Token", fType: fString, input: ti(vc.AccessKey)},
@@ -78,7 +79,7 @@ func New(cfg *config.Config) *Model {
 		{label: "停止延迟(ms)", key: "stop_delay_ms", help: "松手后补录毫秒", fType: fString, input: ti(fmt.Sprintf("%d", vc.StopDelayMs))},
 		{label: "热词", key: "hotwords", help: "逗号分隔术语", fType: fString, input: ti(strings.Join(vc.Hotwords, ", "))},
 	}
-	return &Model{cfg: cfg, fields: fs, logs: make([]string, 0, 100), cursor: -1, showLogs: true}
+	return &Model{env: env, cfg: cfg, fields: fs, logs: make([]string, 0, 100), cursor: -1, showLogs: true}
 }
 
 func (m *Model) SetDebug(debug bool) {
@@ -94,7 +95,7 @@ func idxOf(opts []string, v string) int {
 	return 0
 }
 
-func (m *Model) Init() tea.Cmd { return tea.Batch(fetchDevices(), tea.EnterAltScreen, tickRefresh()) }
+func (m *Model) Init() tea.Cmd { return tea.Batch(fetchDevices(m.env), tea.EnterAltScreen, tickRefresh()) }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -250,10 +251,8 @@ func (m *Model) save() {
 		m.logf("✅ 配置已保存到 %s", config.FindConfig())
 	}
 	m.logf("  push_to_talk=%s", vc.PushToTalk)
-	if m.OnSave != nil {
-		if err := m.OnSave(m.cfg); err != nil {
-			m.logf("❌ 热键注册失败: %s", err)
-		}
+	if err := m.env.ReloadConfig(m.cfg); err != nil {
+		m.logf("❌ 热键注册失败: %s", err)
 	}
 }
 
@@ -336,11 +335,12 @@ func (m *Model) View() string {
 			b.WriteString("  " + dStyle.Render(l) + "\n")
 		}
 		// Voice plugin logs
+		voiceLogs := m.env.VoiceLogs()
 		sv := 0
-		if len(voice.TUILogBuf) > maxLogs {
-			sv = len(voice.TUILogBuf) - maxLogs
+		if len(voiceLogs) > maxLogs {
+			sv = len(voiceLogs) - maxLogs
 		}
-		for _, l := range voice.TUILogBuf[sv:] {
+		for _, l := range voiceLogs[sv:] {
 			b.WriteString("  " + dStyle.Render(l) + "\n")
 		}
 	}
@@ -349,7 +349,7 @@ func (m *Model) View() string {
 }
 
 func (m *Model) renderVoiceStats() string {
-	stats := voice.TUIStats()
+	stats := m.env.VoiceStats()
 	cpm := 0.0
 	if stats.AudioDuration > 0 {
 		cpm = float64(stats.Chars) / stats.AudioDuration.Minutes()
@@ -371,7 +371,7 @@ func (m *Model) renderVoiceStats() string {
 }
 
 func (m *Model) renderVoiceStatus() string {
-	status := voice.TUIStatus()
+	status := m.env.VoiceStatus()
 	label := "待机"
 	style := dStyle
 	switch status.State {
@@ -474,12 +474,12 @@ func (m *Model) logf(format string, args ...interface{}) {
 	m.logs = append(m.logs, fmt.Sprintf(format, args...))
 }
 
-func SetProviderInfo(info hotkey.ProviderInfo) tea.Cmd {
-	return func() tea.Msg { return backendMsg(info) }
+func (m *Model) SetProviderInfo(info hotkey.ProviderInfo) {
+	m.info = info
 }
-func fetchDevices() tea.Cmd {
+func fetchDevices(env frontend.Env) tea.Cmd {
 	return func() tea.Msg {
-		devices, err := voice.ListDevices()
+		devices, err := env.ListDevices()
 		if err != nil {
 			return devMsg{Error: err}
 		}
@@ -492,5 +492,3 @@ type refreshMsg struct{}
 func tickRefresh() tea.Cmd {
 	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg { return refreshMsg{} })
 }
-
-// Handle refreshMsg in Update

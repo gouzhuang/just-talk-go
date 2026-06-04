@@ -4,6 +4,17 @@ All notable project changes are tracked here.
 
 ## Unreleased
 
+- Introduced pluggable frontend architecture (`internal/frontend`).
+- Migrated TUI into the new frontend framework as `frontend/tui`.
+- Added GNOME system-tray frontend (`frontend/gnome`) with AppIndicator/StatusNotifier support.
+  - Displays a 22×22 colored microphone icon in the system panel that reflects voice state (idle/connecting/recording/stopping/error).
+  - Dynamic context menu shows live status, statistics, recent logs, and a "Copy last result" action.
+  - Configuration editing via `zenity` forms.
+  - Added `just-talk --frontend gnome` (build with `-tags gnome`).
+- Added headless `daemon` frontend for `--no-tui` / `--frontend daemon` mode.
+- Added `--frontend` CLI flag with `auto` detection (GNOME desktop defaults to tray, otherwise TUI).
+- Fixed GNOME tray "Quit" menu item not terminating the application.
+
 - Fixed X11 modifier-only hotkeys (e.g., Alt+Super) not triggering reliably when pressed in certain order, by tracking modifier state through XKB notifications instead of relying solely on passive grabs that window managers can intercept.
 - Fixed X11 event loop using 10ms polling instead of fd-based blocking wait, eliminating unnecessary latency in hotkey response.
 - Fixed modifier key auto-repeat generating spurious KeyUp events on X11 by enabling XKB detectable auto-repeat.
