@@ -35,6 +35,18 @@ package hotkey
 // static KeySym x11_keysym_from_name(const char *name) {
 // 	return XStringToKeysym(name);
 // }
+//
+// static Bool x11_enable_detectable_repeat(Display *dpy) {
+// 	return XkbSetDetectableAutoRepeat(dpy, True, NULL);
+// }
+//
+// static int x11_xkb_event_base(Display *dpy) {
+// 	int opcode, event_base, error_base, major, minor;
+// 	if (!XkbQueryExtension(dpy, &opcode, &event_base, &error_base, &major, &minor))
+// 		return -1;
+// 	XkbSelectEvents(dpy, XkbUseCoreKbd, XkbStateNotifyMask, XkbStateNotifyMask);
+// 	return event_base;
+// }
 import "C"
 
 import (
@@ -47,6 +59,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 // X11 modifier masks.
@@ -124,16 +138,16 @@ type x11Provider struct {
 	display *C.Display
 	root    C.Window
 
-	// Track pressed keys to filter auto-repeat
+	detectableAutoRepeat bool
+	xkbEventBase         int
+
 	pressedKeys map[uint]bool
 
-	// Standard modifier+key combos that have fired KeyDown.
-	activeCombos map[Combo]bool
+	activeCombos         map[Combo]bool
+	activeModifierCombos map[Combo]bool
 
-	// Track grabbed keycodes for cleanup
 	grabbedKeys map[uint]bool
 
-	// Pipe for signaling the event loop to stop
 	stopFd int
 
 	logger *slog.Logger
@@ -148,14 +162,31 @@ func newX11Provider() (Provider, error) {
 		return nil, fmt.Errorf("cannot open X display (DISPLAY=%s)", getEnvOrDefault("DISPLAY", "(unset)"))
 	}
 
+	detectable := C.x11_enable_detectable_repeat(display) != 0
+	xkbBase := int(C.x11_xkb_event_base(display))
+	logger := slog.Default().With("platform", "x11")
+	if detectable {
+		logger.Debug("XKB detectable auto-repeat enabled")
+	} else {
+		logger.Debug("XKB detectable auto-repeat not available, using manual filtering")
+	}
+	if xkbBase >= 0 {
+		logger.Debug("XKB state tracking enabled", "event_base", xkbBase)
+	} else {
+		logger.Debug("XKB state tracking not available")
+	}
+
 	return &x11Provider{
-		channels:     make(map[Combo]chan<- Event),
-		display:      display,
-		root:         C.XDefaultRootWindow(display),
-		pressedKeys:  make(map[uint]bool),
-		activeCombos: make(map[Combo]bool),
-		grabbedKeys:  make(map[uint]bool),
-		logger:       slog.Default().With("platform", "x11"),
+		channels:             make(map[Combo]chan<- Event),
+		display:              display,
+		root:                 C.XDefaultRootWindow(display),
+		detectableAutoRepeat: detectable,
+		xkbEventBase:         xkbBase,
+		pressedKeys:          make(map[uint]bool),
+		activeCombos:         make(map[Combo]bool),
+		activeModifierCombos: make(map[Combo]bool),
+		grabbedKeys:          make(map[uint]bool),
+		logger:               logger,
 	}, nil
 }
 
@@ -176,6 +207,10 @@ func (p *x11Provider) RegisterWithOptions(combo Combo, opts RegisterOptions) (<-
 
 	ch := make(chan Event, 32) // buffered to avoid dropping events before dispatch goroutine starts
 	p.channels[combo] = ch
+
+	if combo.IsModifierOnly() {
+		p.activeModifierCombos[combo] = false
+	}
 
 	// Get all needed grabs for this combo
 	grabs := p.comboToX11Grabs(combo)
@@ -212,6 +247,7 @@ func (p *x11Provider) Unregister(combo Combo) error {
 
 	close(ch)
 	delete(p.channels, combo)
+	delete(p.activeModifierCombos, combo)
 	return nil
 }
 
@@ -225,12 +261,13 @@ func (p *x11Provider) Start(ctx context.Context) error {
 		return fmt.Errorf("pipe: %w", err)
 	}
 	p.stopFd = fds[0]
+	defer syscall.Close(p.stopFd)
 
 	// Flush pending X requests
 	C.XFlush(p.display)
 
 	// Get connection file descriptor for polling
-	connFd := C.XConnectionNumber(p.display)
+	connFd := int(C.XConnectionNumber(p.display))
 
 	// Watch for both X events and stop signal
 	go func() {
@@ -238,55 +275,114 @@ func (p *x11Provider) Start(ctx context.Context) error {
 		// Write anything to unblock select/poll
 		syscall.Write(fds[1], []byte{0})
 	}()
+	defer syscall.Close(fds[1])
 
 	p.logger.Info("X11 event loop started")
+
+	pollFds := []unix.PollFd{
+		{Fd: int32(connFd), Events: unix.POLLIN},
+		{Fd: int32(p.stopFd), Events: unix.POLLIN},
+	}
 
 	var event C.XEvent
 	for {
 		// Check if we have pending events
-		pending := C.XPending(p.display)
-		if pending > 0 {
+		if C.XPending(p.display) > 0 {
 			C.XNextEvent(p.display, &event)
 			p.handleXEvent(&event)
 			continue
 		}
 
-		// Poll with timeout to avoid busy-wait
-		time.Sleep(10 * time.Millisecond)
-
-		// Check context
-		select {
-		case <-ctx.Done():
-			// Clean shutdown: release grabs, flush, close display
-			p.mu.Lock()
-			for combo := range p.channels {
-				grabs := p.comboToX11Grabs(combo)
-				p.releaseGrabs(grabs)
+		if _, err := unix.Poll(pollFds, -1); err != nil {
+			if err == unix.EINTR {
+				continue
 			}
-			p.mu.Unlock()
-			C.XFlush(p.display)
-			C.XCloseDisplay(p.display)
-			p.display = nil
-			syscall.Close(p.stopFd)
-			_ = fds[1]
-			return ctx.Err()
-		default:
+			if ctx.Err() != nil {
+				break
+			}
+			p.logger.Error("poll failed", "error", err)
+			break
 		}
 
-		// Drain any connection data
-		_ = connFd
+		if pollFds[1].Revents&(unix.POLLIN|unix.POLLHUP|unix.POLLERR) != 0 {
+			break
+		}
+
+		if pollFds[0].Revents&(unix.POLLHUP|unix.POLLERR) != 0 {
+			p.logger.Error("X11 connection error", "revents", pollFds[0].Revents)
+			break
+		}
+
+		if pollFds[0].Revents&unix.POLLIN != 0 {
+			continue
+		}
+
+		// Unexpected poll state — avoid tight loop
+		time.Sleep(10 * time.Millisecond)
+		continue
 	}
 
-	// Unreachable — kept for safety
+	p.mu.Lock()
+	for combo := range p.channels {
+		grabs := p.comboToX11Grabs(combo)
+		p.releaseGrabs(grabs)
+	}
+	p.mu.Unlock()
+	C.XFlush(p.display)
+	C.XCloseDisplay(p.display)
+	p.display = nil
+
+	return ctx.Err()
 }
 
 func (p *x11Provider) handleXEvent(event *C.XEvent) {
 	evtType := (*C.int)(unsafe.Pointer(event))
-	switch *evtType {
-	case C.KeyPress:
+	switch {
+	case *evtType == C.KeyPress:
 		p.handleKeyEvent(event, false)
-	case C.KeyRelease:
+	case *evtType == C.KeyRelease:
 		p.handleKeyEvent(event, true)
+	case p.xkbEventBase >= 0 && *evtType == C.int(p.xkbEventBase):
+		p.handleXkbStateNotify(event)
+	}
+}
+
+func (p *x11Provider) handleXkbStateNotify(event *C.XEvent) {
+	state := (*C.XkbStateNotifyEvent)(unsafe.Pointer(event))
+	if state.xkb_type != C.XkbStateNotify {
+		return
+	}
+	baseMods := x11StateToMods(uint(state.base_mods))
+	now := time.Now()
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for combo, active := range p.activeModifierCombos {
+		nowActive := baseMods&combo.Mods == combo.Mods
+		ch := p.channels[combo]
+		switch {
+		case nowActive && !active:
+			if ch != nil {
+				select {
+				case ch <- Event{Combo: combo, Type: KeyDown, Time: now}:
+					p.activeModifierCombos[combo] = true
+				default:
+				}
+			} else {
+				p.activeModifierCombos[combo] = true
+			}
+		case !nowActive && active:
+			if ch != nil {
+				select {
+				case ch <- Event{Combo: combo, Type: KeyUp, Time: now}:
+					p.activeModifierCombos[combo] = false
+				default:
+				}
+			} else {
+				p.activeModifierCombos[combo] = false
+			}
+		}
 	}
 }
 
@@ -306,23 +402,31 @@ func (p *x11Provider) handleKeyEvent(event *C.XEvent, isRelease bool) {
 		return
 	}
 
-	// AutoRepeat: on X11, auto-repeat generates KeyRelease+KeyPress pairs.
-	// We ignore auto-repeat KeyRelease by checking if the key is currently marked pressed.
-	if isRelease {
-		if !p.pressedKeys[uint(keycode)] {
-			if !key.IsModifier() {
-				// This is the auto-repeat "fake" release — ignore
+	if p.detectableAutoRepeat {
+		if !isRelease {
+			if p.pressedKeys[uint(keycode)] {
 				return
 			}
+			p.pressedKeys[uint(keycode)] = true
 		} else {
 			delete(p.pressedKeys, uint(keycode))
 		}
 	} else {
-		if p.pressedKeys[uint(keycode)] {
-			// Auto-repeat press — ignore
-			return
+		if isRelease {
+			// NOTE: On X servers without detectable auto-repeat or XKB
+			// state tracking, modifier-only combos may miss KeyUp events
+			// when a modifier is pressed before the passive grab becomes active.
+			if !p.pressedKeys[uint(keycode)] {
+				return
+			}
+			delete(p.pressedKeys, uint(keycode))
+		} else {
+			if p.pressedKeys[uint(keycode)] {
+				// Auto-repeat press — ignore
+				return
+			}
+			p.pressedKeys[uint(keycode)] = true
 		}
-		p.pressedKeys[uint(keycode)] = true
 	}
 
 	// Convert X11 state to Modifier
@@ -335,6 +439,11 @@ func (p *x11Provider) handleKeyEvent(event *C.XEvent, isRelease bool) {
 
 	// Check registered combos
 	for combo, ch := range p.channels {
+		// Modifier-only combos are handled via XKB state tracking when available;
+		// fall back to the KeyPress/KeyRelease path when XKB is not available.
+		if combo.IsModifierOnly() && p.xkbEventBase >= 0 {
+			continue
+		}
 		if isRelease {
 			if p.activeCombos[combo] && x11ComboReleasedByKey(combo, key) {
 				delete(p.activeCombos, combo)
@@ -400,6 +509,7 @@ func (p *x11Provider) Stop() error {
 		delete(p.channels, combo)
 	}
 	p.activeCombos = make(map[Combo]bool)
+	p.activeModifierCombos = make(map[Combo]bool)
 
 	return nil
 }

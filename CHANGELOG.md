@@ -4,6 +4,10 @@ All notable project changes are tracked here.
 
 ## Unreleased
 
+- Fixed X11 modifier-only hotkeys (e.g., Alt+Super) not triggering reliably when pressed in certain order, by tracking modifier state through XKB notifications instead of relying solely on passive grabs that window managers can intercept.
+- Fixed X11 event loop using 10ms polling instead of fd-based blocking wait, eliminating unnecessary latency in hotkey response.
+- Fixed modifier key auto-repeat generating spurious KeyUp events on X11 by enabling XKB detectable auto-repeat.
+- Use non-blocking send in hotkey handlers so a full voice queue no longer blocks the hotkey dispatch loop; overflow events are logged and dropped.
 - Restricted voice hotkeys to non-text global shortcut keys, rejecting letters, digits, punctuation, Space, and similar text-producing keys.
 - Avoid duplicate auto-submit on KDE Plasma by using uinput directly and not writing the Wayland primary selection there.
 - TUI is now the default startup mode.

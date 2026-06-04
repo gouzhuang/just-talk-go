@@ -378,9 +378,13 @@ func (p *VoicePlugin) onHotkey(evt hotkey.Event) {
 		p.logger.Debug("voice hotkey ignored", "type", evt.Type, "mode", mode)
 		return
 	}
-	p.events <- evt
-	markTUIQueued(evt, len(p.events))
-	p.logger.Debug("voice hotkey queued", "type", evt.Type, "queue_len", len(p.events))
+	select {
+	case p.events <- evt:
+		markTUIQueued(evt, len(p.events))
+		p.logger.Debug("voice hotkey queued", "type", evt.Type, "queue_len", len(p.events))
+	default:
+		p.logger.Debug("voice event dropped, queue full", "type", evt.Type, "queue_len", len(p.events))
+	}
 }
 
 func (p *VoicePlugin) onCancelHotkey(evt hotkey.Event) {
