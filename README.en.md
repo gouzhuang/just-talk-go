@@ -18,6 +18,7 @@ It is built for people who want to type less and speak more while coding, chatti
 - Clipboard copy and automatic text submission.
 - Always-on-top recording status overlay for Wayland, X11, and macOS.
 - TUI configuration for hotkeys, mode, auto-submit, stop delay, hotwords, and related settings.
+- GNOME system tray frontend that shows an icon and status menu in the top panel without taking up taskbar space.
 - ASR hotwords for project names, people names, English terms, and domain-specific vocabulary.
 - Usage statistics for total sessions, total recognized characters, average speed, and recent speed.
 
@@ -59,6 +60,16 @@ Build for the current platform:
 CGO_ENABLED=1 go build -o build/just-talk ./cmd/just-talk
 ```
 
+Build with GNOME system tray support (requires extra dependencies):
+
+```bash
+# Debian / Ubuntu
+sudo apt install libayatana-appindicator3-dev
+
+# Build
+CGO_ENABLED=1 go build -tags gnome -o build/just-talk ./cmd/just-talk
+```
+
 Install to `~/.local/bin/just-talk`:
 
 ```bash
@@ -77,11 +88,15 @@ Start the TUI:
 just-talk
 ```
 
-Run without the TUI:
+Choose a frontend:
 
 ```bash
-just-talk --no-tui
+just-talk --frontend tui      # terminal UI (default)
+just-talk --frontend gnome    # GNOME system tray (requires -tags gnome build)
+just-talk --frontend daemon   # headless daemon mode
 ```
+
+The legacy `--no-tui` flag is still accepted and equivalent to `--frontend daemon`.
 
 Force a backend:
 

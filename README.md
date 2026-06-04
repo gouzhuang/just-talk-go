@@ -18,6 +18,7 @@ Just Talk 是一个面向桌面环境的语音输入工具。它通过全局快�
 - 自动复制到剪贴板，支持自动上屏。
 - Wayland / X11 / macOS 顶层录音状态胶囊提示。
 - TUI 配置界面，支持热键、模式、自动上屏、停止延迟、热词等配置。
+- GNOME 系统托盘前端，不占用任务栏，在系统面板显示图标和状态菜单。
 - 热词增强识别，适合项目名、人名、英文术语和专有名词。
 - 录音历史统计，包括历史次数、总字数、平均速度和最近速度。
 
@@ -59,6 +60,16 @@ xcode-select --install
 CGO_ENABLED=1 go build -o build/just-talk ./cmd/just-talk
 ```
 
+构建 GNOME 系统托盘版本（需要额外依赖）：
+
+```bash
+# Debian / Ubuntu
+sudo apt install libayatana-appindicator3-dev
+
+# 构建
+CGO_ENABLED=1 go build -tags gnome -o build/just-talk ./cmd/just-talk
+```
+
 安装到 `~/.local/bin/just-talk`：
 
 ```bash
@@ -77,11 +88,15 @@ macOS 需要在本机 macOS 上构建；项目不提供非 cgo 版本。
 just-talk
 ```
 
-后台模式：
+指定前端：
 
 ```bash
-just-talk --no-tui
+just-talk --frontend tui      # 终端界面（默认）
+just-talk --frontend gnome    # GNOME 系统托盘（需 -tags gnome 构建）
+just-talk --frontend daemon   # 无界面守护进程
 ```
+
+旧版 `--no-tui` 仍兼容，等价于 `--frontend daemon`。
 
 指定后端：
 

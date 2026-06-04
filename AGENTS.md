@@ -21,14 +21,27 @@ go test ./... -tags no_x11
 CGO_ENABLED=1 go build -o build/just-talk ./cmd/just-talk
 ```
 
+GNOME tray frontend requires an additional build tag and dependency:
+
+```bash
+# Install libappindicator3 (Debian/Ubuntu)
+sudo apt install libayatana-appindicator3-dev
+
+# Build with GNOME support
+go build -tags gnome -o build/just-talk ./cmd/just-talk
+```
+
 Do not add or preserve non-cgo macOS fallback builds. A build that compiles but cannot provide native hotkeys, recording, clipboard, auto-submit, or overlay is worse than an explicit build failure.
 
 Useful runtime commands:
 
 ```bash
-just-talk               # TUI mode, default
-just-talk --no-tui      # daemon mode
-just-talk --doctor      # startup environment check
+just-talk                           # TUI mode, default
+just-talk --frontend tui            # explicit TUI mode
+just-talk --frontend gnome          # GNOME system tray mode (requires -tags gnome build)
+just-talk --frontend daemon         # headless daemon mode
+just-talk --no-tui                  # legacy alias for --frontend daemon
+just-talk --doctor                  # startup environment check
 just-talk --backend x11
 just-talk --backend wayland
 ```
@@ -75,7 +88,10 @@ Core packages:
 - `internal/autotype/`: platform paste/auto-submit implementation.
 - `internal/clipboard/`: platform clipboard implementation.
 - `internal/doctor/`: startup environment checks.
-- `internal/tui/`: Bubble Tea configuration UI.
+- `internal/frontend/`: pluggable frontend abstraction layer.
+- `internal/frontend/tui/`: Bubble Tea configuration UI.
+- `internal/frontend/gnome/`: GNOME system tray frontend (build tag `gnome`).
+- `internal/frontend/daemon/`: headless daemon frontend.
 
 ## Hotkey Notes
 
