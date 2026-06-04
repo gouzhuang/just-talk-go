@@ -1,4 +1,5 @@
 //go:build gnome
+
 package gnome
 
 import (
@@ -6,24 +7,25 @@ import (
 	"sync"
 	"time"
 
-	"github.com/c/just-talk-go/config"
-	"github.com/c/just-talk-go/internal/frontend"
 	"fyne.io/systray"
+	"github.com/c/just-talk-go/config"
+	"github.com/c/just-talk-go/internal/clipboard"
+	"github.com/c/just-talk-go/internal/frontend"
 )
 
 type tray struct {
-	env            frontend.Env
-	statusItem     *systray.MenuItem
-	statsItem      *systray.MenuItem
-	lastTextItem   *systray.MenuItem
-	configItem     *systray.MenuItem
-	logItem        *systray.MenuItem
-	quitItem       *systray.MenuItem
-	lastState      string
-	lastSessionID  uint64
-	lastText       string
-	quit           chan struct{}
-	quitOnce       sync.Once
+	env          frontend.Env
+	statusItem   *systray.MenuItem
+	statsItem    *systray.MenuItem
+	lastTextItem *systray.MenuItem
+	configItem   *systray.MenuItem
+	logItem      *systray.MenuItem
+	quitItem     *systray.MenuItem
+	lastState    string
+	clipboard    *clipboard.Clipboard
+	clipboardMu  sync.Mutex
+	quit         chan struct{}
+	quitOnce     sync.Once
 }
 
 func newTray(env frontend.Env) *tray {
@@ -137,7 +139,7 @@ func (t *tray) update() {
 	t.statsItem.SetTitle(statsLabel)
 
 	// Enable/disable copy last result
-	if status.State == "idle" && t.lastText != "" {
+	if status.State == "idle" && stats.LastText != "" {
 		t.lastTextItem.Enable()
 	} else {
 		t.lastTextItem.Disable()
@@ -170,9 +172,29 @@ func (t *tray) handleLog() {
 }
 
 func (t *tray) handleCopyLast() {
-	if t.lastText == "" {
+	stats := t.env.VoiceStats()
+	if stats.LastText == "" {
 		return
 	}
-	// We don't have direct clipboard access here, but we can show it
-	showMessage("最后结果", t.lastText)
+	// Run clipboard operations in a goroutine to avoid blocking the event loop.
+	// Clipboard commands (xclip, wl-copy) can hang if the display server is unresponsive,
+	// and blocking the event loop would make the quit menu item stop working.
+	go func(text string) {
+		t.clipboardMu.Lock()
+		if t.clipboard == nil {
+			cb, err := clipboard.New()
+			if err != nil {
+				t.clipboardMu.Unlock()
+				showError("复制失败", fmt.Sprintf("无法访问剪贴板: %v", err))
+				return
+			}
+			t.clipboard = cb
+		}
+		cb := t.clipboard
+		t.clipboardMu.Unlock()
+
+		if err := cb.Set(text); err != nil {
+			showError("复制失败", fmt.Sprintf("写入剪贴板失败: %v", err))
+		}
+	}(stats.LastText)
 }

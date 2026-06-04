@@ -65,6 +65,7 @@ type TUIVoiceStats struct {
 	AudioDuration     time.Duration
 	LastTextChars     int
 	LastAudioDuration time.Duration
+	LastText          string
 }
 
 func pout(format string, args ...interface{}) {
@@ -773,13 +774,19 @@ func (p *VoicePlugin) finishRecordingSession(session *recordingSession) {
 				p.publishError("识别超时: 等待 ASR final 超过 15s", session.sessionID)
 			}
 		}
-		if text := session.asrClient.LastText(); text != "" && session.userStopped && p.claimSessionOutput(session.sessionID) {
-			audioDuration := time.Duration(0)
-			if !session.startedAt.IsZero() {
-				audioDuration = time.Since(session.startedAt)
+		text := session.asrClient.LastText()
+		if text != "" {
+			tuiStatsMu.Lock()
+			tuiStats.LastText = text
+			tuiStatsMu.Unlock()
+			if session.userStopped && p.claimSessionOutput(session.sessionID) {
+				audioDuration := time.Duration(0)
+				if !session.startedAt.IsZero() {
+					audioDuration = time.Since(session.startedAt)
+				}
+				recordTUIStats(text, audioDuration)
+				p.dispatchTextOutput(text, session.autoSubmit)
 			}
-			recordTUIStats(text, audioDuration)
-			p.dispatchTextOutput(text, session.autoSubmit)
 		}
 		p.logger.Debug("finish session: closing ASR client")
 		closeDone := make(chan error, 1)

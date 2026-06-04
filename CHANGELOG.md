@@ -14,6 +14,8 @@ All notable project changes are tracked here.
 - Added headless `daemon` frontend for `--no-tui` / `--frontend daemon` mode.
 - Added `--frontend` CLI flag with `auto` detection (GNOME desktop defaults to tray, otherwise TUI).
 - Fixed GNOME tray "Quit" menu item not terminating the application.
+- Fixed GNOME tray "Copy last result" menu item staying permanently disabled by exposing the last ASR text through `TUIVoiceStatus.LastText`.
+- Fixed GNOME tray "Copy last result" showing a dialog instead of copying to the clipboard.
 
 - Fixed X11 modifier-only hotkeys (e.g., Alt+Super) not triggering reliably when pressed in certain order, by tracking modifier state through XKB notifications instead of relying solely on passive grabs that window managers can intercept.
 - Fixed X11 event loop using 10ms polling instead of fd-based blocking wait, eliminating unnecessary latency in hotkey response.
