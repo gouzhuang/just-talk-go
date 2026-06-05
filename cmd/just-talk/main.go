@@ -301,6 +301,13 @@ func installSelf() error {
 
 	fmt.Fprintf(os.Stdout, "Installed just-talk to %s\n", target)
 	printInstallPathNote(targetDir)
+
+	if isGNOME() {
+		if err := installDesktopAndIcons(home); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: desktop/icon installation failed: %v\n", err)
+		}
+	}
+
 	return nil
 }
 

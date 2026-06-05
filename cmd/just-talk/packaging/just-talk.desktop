@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Just Talk
+GenericName=Voice Input
+Comment=Desktop voice input tool — record with a global hotkey, transcribe via streaming ASR, and paste text into any application
+Comment[zh_CN]=桌面语音输入工具 — 全局快捷键录音，流式语音识别，自动粘贴到当前输入框
+Icon=just-talk
+Exec={{HOME}}/.local/bin/just-talk --frontend gnome
+Terminal=false
+Categories=System;Utility;
+Keywords=voice;input;asr;dictation;speech;
+StartupNotify=false

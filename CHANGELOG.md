@@ -40,6 +40,7 @@ All notable project changes are tracked here.
 - Made `Esc` cancel active overlay states, including the final ASR wait state, and suppress output from canceled pending sessions.
 - Improved Wayland overlay rounded-corner antialiasing, especially on KDE Plasma.
 - Added `just-talk --install` and `make install` to install the binary into `~/.local/bin`.
+- `--install` now installs a `.desktop` entry and hicolor app icons on GNOME desktops for system-tray integration.
 
 ## 2026-05-30
 
