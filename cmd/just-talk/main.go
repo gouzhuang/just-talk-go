@@ -30,7 +30,7 @@ func main() {
 	debug := flag.Bool("debug", false, "enable debug plugin")
 	verbose := flag.Bool("verbose", false, "verbose logging")
 	useTUI := flag.Bool("tui", true, "run with terminal UI")
-	noTUI := flag.Bool("no-tui", false, "run without terminal UI")
+	_ = flag.Bool("no-tui", false, "run without terminal UI")
 	frontendFlag := flag.String("frontend", "auto", "frontend: tui, gnome, daemon, auto")
 	doctorOnly := flag.Bool("doctor", false, "run startup doctor and exit")
 	installOnly := flag.Bool("install", false, "install just-talk to ~/.local/bin")
@@ -54,12 +54,20 @@ func main() {
 	}
 
 	// Legacy flag compatibility
-	if *noTUI {
-		*frontendFlag = "daemon"
-	}
-	if !*useTUI {
-		*frontendFlag = "daemon"
-	}
+	flag.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "no-tui":
+			*frontendFlag = "daemon"
+		case "tui":
+			if *useTUI {
+				*frontendFlag = "tui"
+			} else {
+				*frontendFlag = "daemon"
+			}
+		case "frontend":
+			// already set
+		}
+	})
 
 	// Auto-detect frontend
 	if *frontendFlag == "auto" {
