@@ -21,11 +21,11 @@ go test ./... -tags no_x11
 CGO_ENABLED=1 go build -o build/just-talk ./cmd/just-talk
 ```
 
-GNOME tray frontend requires an additional build tag and dependency:
+GNOME tray frontend requires an additional build tag and dependencies:
 
 ```bash
-# Install libappindicator3 (Debian/Ubuntu)
-sudo apt install libayatana-appindicator3-dev
+# Install GTK3 and libappindicator3 (Debian/Ubuntu)
+sudo apt install libgtk-3-dev libayatana-appindicator3-dev
 
 # Build with GNOME support
 go build -tags gnome -o build/just-talk ./cmd/just-talk

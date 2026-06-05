@@ -41,10 +41,10 @@ Linux build dependencies:
 
 ```bash
 # Arch Linux
-sudo pacman -S --needed go gcc libx11 libxtst libxext wayland
+sudo pacman -S --needed go gcc libx11 libxtst libxext wayland gtk3
 
 # Debian / Ubuntu
-sudo apt install golang-go build-essential libx11-dev libxtst-dev libxext-dev libxinerama-dev libwayland-dev
+sudo apt install golang-go build-essential libx11-dev libxtst-dev libxext-dev libxinerama-dev libwayland-dev libgtk-3-dev
 ```
 
 macOS build dependencies:
@@ -63,8 +63,11 @@ CGO_ENABLED=1 go build -o build/just-talk ./cmd/just-talk
 Build with GNOME system tray support (requires extra dependencies):
 
 ```bash
+# Arch Linux
+sudo pacman -S --needed gtk3 libayatana-appindicator
+
 # Debian / Ubuntu
-sudo apt install libayatana-appindicator3-dev
+sudo apt install libgtk-3-dev libayatana-appindicator3-dev
 
 # Build
 CGO_ENABLED=1 go build -tags gnome -o build/just-talk ./cmd/just-talk

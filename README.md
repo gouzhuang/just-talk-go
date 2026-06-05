@@ -41,10 +41,10 @@ Linux 构建依赖：
 
 ```bash
 # Arch Linux
-sudo pacman -S --needed go gcc libx11 libxtst libxext wayland
+sudo pacman -S --needed go gcc libx11 libxtst libxext wayland gtk3
 
 # Debian / Ubuntu
-sudo apt install golang-go build-essential libx11-dev libxtst-dev libxext-dev libxinerama-dev libwayland-dev
+sudo apt install golang-go build-essential libx11-dev libxtst-dev libxext-dev libxinerama-dev libwayland-dev libgtk-3-dev
 ```
 
 macOS 构建依赖：
@@ -63,8 +63,11 @@ CGO_ENABLED=1 go build -o build/just-talk ./cmd/just-talk
 构建 GNOME 系统托盘版本（需要额外依赖）：
 
 ```bash
+# Arch Linux
+sudo pacman -S --needed gtk3 libayatana-appindicator
+
 # Debian / Ubuntu
-sudo apt install libayatana-appindicator3-dev
+sudo apt install libgtk-3-dev libayatana-appindicator3-dev
 
 # 构建
 CGO_ENABLED=1 go build -tags gnome -o build/just-talk ./cmd/just-talk
